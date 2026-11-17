@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review Possession</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#9aa3b2;
+          --ok:#2fbf71; --late:#e0a52b; --bad:#e5484d; --unsure:#7c8ba1; --accent:#4c8dff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, sans-serif; }
+  .wrap { display:grid; grid-template-columns: 340px 1fr; height:100vh; }
+  aside { border-right:1px solid var(--line); overflow:auto; background:var(--panel); }
+  aside h1 { font-size:15px; margin:14px 14px 4px; }
+  aside .sum { margin:0 14px 10px; color:var(--muted); font-size:12px; }
+  .item { padding:9px 14px; border-top:1px solid var(--line); cursor:pointer; display:grid;
+          grid-template-columns: 26px 1fr auto; gap:6px; align-items:center; }
+  .item:hover { background:#1f232c; }
+  .item.active { background:#22324f; }
+  .item .no { color:var(--muted); }
+  .item .k { font-size:12px; color:var(--muted); }
+  .badge { font-size:11px; padding:2px 7px; border-radius:10px; background:#2a2f3a; color:var(--muted); }
+  .b-benar { background:var(--ok); color:#06210f; } .b-telat { background:var(--late); color:#2a1d00; }
+  .b-salah { background:var(--bad); color:#fff; } .b-ragu { background:var(--unsure); color:#fff; }
+  main { display:flex; flex-direction:column; min-width:0; }
+  video { width:100%; max-height:62vh; background:#000; }
+  .panel { padding:14px 18px; display:grid; gap:10px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .model { font-size:18px; font-weight:600; }
+  .clock { font-variant-numeric: tabular-nums; color:var(--muted); }
+  .now { font-size:22px; font-weight:700; font-variant-numeric: tabular-nums; min-width:200px; }
+  .now.hit { color:#fff; background:var(--bad); padding:2px 10px; border-radius:6px; }
+  button { background:#262b36; color:var(--text); border:1px solid var(--line); border-radius:8px;
+           padding:8px 12px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.v-benar { border-color:var(--ok); } button.v-telat { border-color:var(--late); }
+  button.v-salah { border-color:var(--bad); } button.v-ragu { border-color:var(--unsure); }
+  input[type=text] { flex:1; min-width:240px; background:#11141a; color:var(--text);
+                     border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; }
+  .help { color:var(--muted); font-size:12px; }
+  .warn { background:#3a2a0d; border:1px solid var(--late); padding:10px; border-radius:8px; display:none; }
+  kbd { background:#262b36; border:1px solid var(--line); border-radius:4px; padding:0 5px; font-size:11px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside>
+    <h1>Momen untuk dicek</h1>
+    <div class="sum" id="sum"></div>
+    <div id="list"></div>
+  </aside>
+  <main>
+    <video id="v" preload="metadata" src="../data/tactical/BAR-ATH_tactical.mp4"></video>
+    <div class="panel">
+      <div class="warn" id="warn">
+        Video tidak bisa dimuat dari <code>data/tactical/BAR-ATH_tactical.mp4</code>.
+        Pilih file videonya manual: <input type="file" id="pick" accept="video/mp4">
+      </div>
+      <div class="row">
+        <span class="model" id="model">Pilih momen di kiri</span>
+        <span class="clock" id="meta"></span>
+      </div>
+      <div class="row">
+        <span class="now" id="now">–</span>
+        <span class="clock" id="pos"></span>
+      </div>
+      <div class="row">
+        <button id="replay">↺ Ulang <kbd>R</kbd></button>
+        <button id="slow">Lambat 0.5× <kbd>S</kbd></button>
+        <button id="back">−2 s <kbd>←</kbd></button>
+        <button id="fwd">+2 s <kbd>→</kbd></button>
+        <button id="play">▶/❚❚ <kbd>Spasi</kbd></button>
+      </div>
+      <div class="row">
+        <button class="v-benar" data-v="benar">Benar <kbd>1</kbd></button>
+        <button class="v-telat" data-v="telat">Telat/Cepat &gt;1 s <kbd>2</kbd></button>
+        <button class="v-salah" data-v="salah">Salah <kbd>3</kbd></button>
+        <button class="v-ragu" data-v="ragu">Ragu <kbd>4</kbd></button>
+        <input type="text" id="note" placeholder="Catatan: mis. 'cuma defleksi', 'restart 2 s lebih awal', 'kiper pegang bola'">
+      </div>
+      <div class="row">
+        <button id="export">⬇ Simpan hasil (CSV)</button>
+        <span class="help">Klik momen → video mulai 3 s sebelum momen dan berhenti 5 s sesudahnya.
+          Tulisan merah <b>SEKARANG</b> = saat model bilang kejadiannya terjadi. Hasil tersimpan otomatis di browser ini.</span>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+const MOMENTS = __MOMENTS__;
+const FPS = 25, LEAD = 3, TAIL = 5, KEY = "mtah-review-" + __KEY__;
+const v = document.getElementById("v");
+let cur = -1, stopAt = null;
+let results = {};
+try { results = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { results = {}; }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(results)); } catch (e) {} }
+function fmt(t) { const s = Math.max(0, t); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return h + ":" + String(m).padStart(2, "0") + ":" + (s % 60).toFixed(2).padStart(5, "0"); }
+
+function renderList() {
+  const list = document.getElementById("list"); list.innerHTML = "";
+  const counts = { benar: 0, telat: 0, salah: 0, ragu: 0 };
+  MOMENTS.forEach((m, i) => {
+    const r = results[m.no] || {};
+    if (r.verdict) counts[r.verdict]++;
+    const el = document.createElement("div");
+    el.className = "item" + (i === cur ? " active" : "");
+    el.innerHTML = `<span class="no">${m.no}</span><span><div>${m.model}</div>
+      <div class="k">${m.kind} · ${m.clock}</div></span>
+      <span class="badge ${r.verdict ? "b-" + r.verdict : ""}">${r.verdict || "belum"}</span>`;
+    el.onclick = () => select(i);
+    list.appendChild(el);
+  });
+  const done = Object.values(results).filter(r => r.verdict).length;
+  document.getElementById("sum").textContent =
+    `${done}/${MOMENTS.length} dicek · benar ${counts.benar} · telat ${counts.telat} · salah ${counts.salah} · ragu ${counts.ragu}`;
+}
+
+function select(i) {
+  cur = i; const m = MOMENTS[i];
+  document.getElementById("model").textContent = `#${m.no}  ${m.model}`;
+  document.getElementById("meta").textContent = `${m.kind} · menit ${m.clock} · video ${m.video_time} · frame ${m.frame}`;
+  document.getElementById("note").value = (results[m.no] || {}).note || "";
+  renderList(); playFrom(m.t - LEAD);
+}
+function playFrom(t) {
+  if (cur < 0) return;
+  stopAt = MOMENTS[cur].t + TAIL;
+  v.currentTime = Math.max(0, t);
+  v.play().catch(() => {});
+}
+function verdict(val) {
+  if (cur < 0) return;
+  const m = MOMENTS[cur];
+  results[m.no] = { verdict: val, note: document.getElementById("note").value };
+  save(); renderList();
+  if (cur + 1 < MOMENTS.length) select(cur + 1); else v.pause();
+}
+function tick() {
+  if (cur >= 0) {
+    const d = v.currentTime - MOMENTS[cur].t;
+    const now = document.getElementById("now");
+    if (Math.abs(d) < 0.4) { now.textContent = "SEKARANG"; now.className = "now hit"; }
+    else { now.textContent = (d < 0 ? "momen dalam " + (-d).toFixed(1) + " s" : "+" + d.toFixed(1) + " s setelah momen");
+           now.className = "now"; }
+    document.getElementById("pos").textContent = `video ${fmt(v.currentTime)} · frame ${Math.round(v.currentTime * FPS)}`;
+    if (stopAt !== null && v.currentTime >= stopAt) { v.pause(); stopAt = null; }
+  }
+  requestAnimationFrame(tick);
+}
+document.getElementById("replay").onclick = () => cur >= 0 && playFrom(MOMENTS[cur].t - LEAD);
+document.getElementById("slow").onclick = (e) => { v.playbackRate = v.playbackRate === 1 ? 0.5 : 1;
+  e.target.textContent = v.playbackRate === 1 ? "Lambat 0.5×" : "Normal 1×"; };
+document.getElementById("back").onclick = () => { v.currentTime -= 2; };
+document.getElementById("fwd").onclick = () => { v.currentTime += 2; };
+document.getElementById("play").onclick = () => v.paused ? v.play() : v.pause();
+document.querySelectorAll("[data-v]").forEach(b => b.onclick = () => verdict(b.dataset.v));
+document.getElementById("note").addEventListener("input", e => {
+  if (cur < 0) return; const m = MOMENTS[cur];
+  results[m.no] = Object.assign(results[m.no] || {}, { note: e.target.value }); save(); });
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  const map = { "1": "benar", "2": "telat", "3": "salah", "4": "ragu" };
+  if (map[e.key]) verdict(map[e.key]);
+  else if (e.key === "r" || e.key === "R") document.getElementById("replay").click();
+  else if (e.key === "s" || e.key === "S") document.getElementById("slow").click();
+  else if (e.key === "ArrowLeft") v.currentTime -= 2;
+  else if (e.key === "ArrowRight") v.currentTime += 2;
+  else if (e.key === " ") { e.preventDefault(); v.paused ? v.play() : v.pause(); }
+});
+document.getElementById("export").onclick = () => {
+  const esc = s => '"' + String(s ?? "").replace(/"/g, '""') + '"';
+  const rows = [["no", "jenis", "frame", "waktu_video", "menit", "model_bilang", "verdict", "catatan"]];
+  MOMENTS.forEach(m => { const r = results[m.no] || {};
+    rows.push([m.no, m.kind, m.frame, m.video_time, m.clock, m.model, r.verdict || "", r.note || ""]); });
+  const blob = new Blob(["﻿" + rows.map(r => r.map(esc).join(",")).join("\n")], { type: "text/csv" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = "transitions_review_hasil.csv"; a.click();
+};
+v.addEventListener("error", () => { document.getElementById("warn").style.display = "block"; });
+document.getElementById("pick").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  v.src = URL.createObjectURL(f); document.getElementById("warn").style.display = "none";
+  if (cur >= 0) v.addEventListener("loadedmetadata", () => playFrom(MOMENTS[cur].t - LEAD), { once: true });
+};
+renderList(); requestAnimationFrame(tick);
+</script>
+</body>
+</html>
